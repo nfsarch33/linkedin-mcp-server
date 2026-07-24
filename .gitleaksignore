@@ -1,4 +1,8 @@
 # Add fingerprint hashes here to suppress verified-false-positive findings.
 # Use the gitleaks fingerprint hash (NOT the rule ID), one per line.
-# Format: <fingerprint>  # <rationale - one sentence>
 # See: ~/.cursor/rules/00-p0-secrets-pre-push-hook.mdc
+# Rationale: Pydantic schema class name "LinkedInConfig" matches "linkedin-client-id"
+# pattern but contains no actual API key; the secret string is a class identifier.
+# NOTE: file path in fingerprint reflects upstream commit history (with src/ prefix);
+# gitleaks 8 still matches by file:line:rule, so the entry suppresses correctly.
+17e3ed9c2756c722484d151309e24ce6370daf57:src/linkedin_mcp_server/config/schema.py:linkedin-client-id:40
