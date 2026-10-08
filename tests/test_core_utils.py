@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from linkedin_mcp_server.core.exceptions import RateLimitError
-from linkedin_mcp_server.core.utils import detect_rate_limit
+from linkedin_mcp_server.core.utils import detect_rate_limit, scroll_job_sidebar
 
 
 @pytest.fixture
@@ -109,3 +109,58 @@ class TestDetectRateLimit:
 
         mock_page.locator = MagicMock(side_effect=locator_side_effect)
         await detect_rate_limit(mock_page)
+
+
+class TestScrollDeadline:
+    """A spent scroll budget must not turn into no deadline at all."""
+
+    @staticmethod
+    def _page() -> MagicMock:
+        page = MagicMock()
+        page.url = "https://www.linkedin.com/jobs/search/?keywords=python"
+        page.wait_for_selector = AsyncMock()
+        page.evaluate = AsyncMock(return_value={"status": "gone"})
+        return page
+
+    async def test_a_spent_budget_skips_the_scroll(self):
+        """Patchright reads a zero timeout as no timeout.
+
+        A search that has spent its budget would then wait on a page with no
+        job card until the tool is cancelled, and cancellation throws away
+        every page gathered before it.
+        """
+        page = self._page()
+
+        assert await scroll_job_sidebar(page, deadline=0) is False
+        page.wait_for_selector.assert_not_called()
+
+    async def test_a_sliver_of_budget_is_still_a_timeout(self):
+        """`int(0.0004 * 1000)` is zero, which the guard above does not catch."""
+        page = self._page()
+
+        await scroll_job_sidebar(page, deadline=0.0004)
+
+        assert page.wait_for_selector.await_args.kwargs["timeout"] == 1
+
+    async def test_a_deadline_spent_releasing_the_rail_still_ends_the_call(self):
+        """Releasing the rail handle is shielded, so a tool deadline that falls
+        inside it would otherwise be swallowed and the scroll return normally
+        after the caller's time was up."""
+        import asyncio
+
+        import anyio
+
+        page = self._page()
+        holder = MagicMock()
+
+        async def slow_dispose() -> None:
+            await asyncio.sleep(0.3)
+
+        holder.dispose = AsyncMock(side_effect=slow_dispose)
+        page.evaluate_handle = AsyncMock(return_value=holder)
+
+        with pytest.raises(TimeoutError):
+            with anyio.fail_after(0.1):
+                await scroll_job_sidebar(page)
+
+        holder.dispose.assert_awaited_once()
