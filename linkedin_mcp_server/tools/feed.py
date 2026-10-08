@@ -1,5 +1,5 @@
 """
-LinkedIn feed scraping tool.
+LinkedIn feed reading tool.
 
 Fetches posts from the authenticated user's LinkedIn home feed using
 innerText extraction. Scrolls until the requested number of post
@@ -18,8 +18,9 @@ from linkedin_mcp_server.config.schema import DEFAULT_TOOL_TIMEOUT_SECONDS
 from linkedin_mcp_server.core.exceptions import AuthenticationError
 from linkedin_mcp_server.dependencies import get_ready_extractor, handle_auth_error
 from linkedin_mcp_server.error_handler import raise_tool_error
-from linkedin_mcp_server.scraping.extractor import _RATE_LIMITED_MSG
-from linkedin_mcp_server.scraping.link_metadata import Reference
+from linkedin_mcp_server.linkedin.contracts import RATE_LIMITED_SECTION_TEXT
+from linkedin_mcp_server.linkedin.contracts import rate_limited_section_error
+from linkedin_mcp_server.linkedin.link_metadata import Reference
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +34,11 @@ def register_feed_tools(
         timeout=tool_timeout,
         title="Get Feed",
         annotations={"readOnlyHint": True, "openWorldHint": True},
-        tags={"feed", "scraping"},
-        exclude_args=["extractor"],
+        tags={"feed"},
     )
     async def get_feed(
         ctx: Context,
         num_posts: Annotated[int, Field(ge=1, le=50)] = 10,
-        extractor: Any | None = None,
     ) -> dict[str, Any]:
         """
         Get posts from the authenticated user's LinkedIn feed.
@@ -65,13 +64,11 @@ def register_feed_tools(
             should parse sections["feed"] for post bodies.
         """
         try:
-            extractor = extractor or await get_ready_extractor(
-                ctx, tool_name="get_feed"
-            )
-            logger.info("Scraping feed (num_posts=%d)", num_posts)
+            extractor = await get_ready_extractor(ctx, tool_name="get_feed")
+            logger.info("Reading feed (num_posts=%d)", num_posts)
 
             await ctx.report_progress(
-                progress=0, total=100, message="Starting feed scrape"
+                progress=0, total=100, message="Reading the home feed"
             )
 
             extracted = await extractor.extract_feed(num_posts=num_posts)
@@ -80,15 +77,12 @@ def register_feed_tools(
             sections: dict[str, str] = {}
             references: dict[str, list[Reference]] = {}
             section_errors: dict[str, dict[str, Any]] = {}
-            if extracted.text and extracted.text != _RATE_LIMITED_MSG:
+            if extracted.text and extracted.text != RATE_LIMITED_SECTION_TEXT:
                 sections["feed"] = extracted.text
                 if extracted.references:
                     references["feed"] = extracted.references
-            elif extracted.text == _RATE_LIMITED_MSG:
-                section_errors["feed"] = {
-                    "error_type": "rate_limit",
-                    "error_message": extracted.text,
-                }
+            elif extracted.text == RATE_LIMITED_SECTION_TEXT:
+                section_errors["feed"] = rate_limited_section_error()
             elif extracted.error:
                 section_errors["feed"] = extracted.error
 
